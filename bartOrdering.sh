@@ -1,3 +1,3 @@
 #!/bin/bash
 
-python BART-Ordering-Refined.py
+python -u BART-Ordering-Refined.py

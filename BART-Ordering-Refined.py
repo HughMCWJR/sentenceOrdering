@@ -6,13 +6,16 @@
 
 # Load BART summarizer/reorderer
 # FIGURE OUT HOW TO USE SPACEY TOKENIZATION WITH THIS?
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 from transformers import pipeline
 
 summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
 
-# In[2]:
+# In[9]:
 
 
 # Set reordering function using Bart
@@ -28,7 +31,7 @@ from nltk.tokenize import TreebankWordTokenizer
 
 # Gives better ordering? No, does not seem to give better ordering
 MIN_TOKEN_MULTIPLIER = 0.9
-MAX_TOKEN_MULTIPLIER = 1.1
+MAX_TOKEN_MULTIPLIER = 1.0
 
 # Gets all sentences in output
 #MIN_TOKEN_MULTIPLIER = 1.1
@@ -43,11 +46,9 @@ def getNumTokens(inputSentences):
     return count
 
 # Takes in list of sentences and outputs reordered doc
-def reorder(inputSentences):
+def reorderBart(inputSentences):
     minLength = int(getNumTokens(inputSentences) * MIN_TOKEN_MULTIPLIER)
     maxLength = int(getNumTokens(inputSentences) * MAX_TOKEN_MULTIPLIER)
-    if maxLength >= 1024:
-        raise Exception("Too long.")
     return summarizer(" ".join(inputSentences), max_length=maxLength, min_length=minLength, do_sample=False)[0]["summary_text"]
 
 
@@ -73,15 +74,12 @@ spacy_tokenizer = partial(spacy_sentence_tokenizer, nlp)
 #sentences = spacy_tokenizer(text) 
 
 
-# In[4]:
+# In[17]:
 
 
 # Sem_nDCG Metric
 import copy
 import math
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 # Return list of sentences from string document
 def getSentences(doc):
@@ -141,8 +139,9 @@ def getBestPairings(similiarities):
     sims = copy.copy(similiarities)
     
     #while getNumNonZeroes(sims) > 0:
-    while not getIfZero(sims):
-        maxScore = 0
+    #while not getIfZero(sims):
+    while True:
+        maxScore = -1
         bestPairIndexes = [0, 0]
         
         for i in range(len(sims)):
@@ -150,11 +149,14 @@ def getBestPairings(similiarities):
                 if sims[i][j] > maxScore:
                     maxScore = sims[i][j]
                     bestPairIndexes = [i, j]
+                    
+        if maxScore == -1:
+            return pairs
         
         sims[bestPairIndexes[0]] = []
         for k in range(len(sims)):
             if sims[k] != []:
-                sims[k][bestPairIndexes[1]] = 0
+                sims[k][bestPairIndexes[1]] = -1
                             
         pairs.append(bestPairIndexes)
         
@@ -298,7 +300,7 @@ def nDCG(orderedPairs):
 # Test sentence pairing with combinations using Bart
 
 
-# In[6]:
+# In[22]:
 
 
 # Get cnn_dailymail dataset
@@ -308,7 +310,7 @@ from datasets import load_dataset
 dataset = load_dataset("cnn_dailymail", '3.0.0')
 
 
-# In[10]:
+# In[23]:
 
 
 # Test non-sentence pairing metric on cnn_dailymail dataset
@@ -316,31 +318,42 @@ dataset = load_dataset("cnn_dailymail", '3.0.0')
 import random
 import copy
 
-trainDataset = dataset["train"]
+random.seed(0)
+
+numArticles = 1500
+numDone = 0
+numSeen = 0
+
+trainDataset = dataset["test"]["article"][0:numArticles]
+del dataset
 
 file = open("bartResults.txt", "w")
 file.write("")
 file.close()
 
 for article in trainDataset:
+    
+    numSeen += 1
+    print(numSeen)
 
-    sentences = getSentences(article["article"])
+    sentences = getSentences(article)
 
-    correctDoc = " ".join(sentences)
+    correctDoc = article
 
     copyOfSentences = copy.copy(sentences)
     random.shuffle(copyOfSentences)
     shuffledSentences = copyOfSentences
-
-    try:
-        reorderedDoc = reorder(shuffledSentences)
-        print("Done ordering")
-
-        
-    except:
+    
+    maxLength = int(getNumTokens(shuffledSentences) * MAX_TOKEN_MULTIPLIER)
+    if maxLength >= 800:
         print("Doc too long")
         continue
+
+    # Change reorder function to whatever method using
+    reorderedDoc = reorderBart(shuffledSentences)
+    print("Done ordering")
         
+    # Looking at reordered result
     #print(correctDoc + "\n")
     #print(" ".join(shuffledSentences) + "\n")
     #print(reorderedDoc + "\n")
@@ -358,6 +371,8 @@ for article in trainDataset:
     orderedPairs = getOrderedPairs(bestPairs, len(correctSentences))
 
     # Metric output
+    numDone += 1
+    print("Result for " + str(numDone))
     result = nDCG(orderedPairs)
     print(result)
     file = open("bartResults.txt", "a")

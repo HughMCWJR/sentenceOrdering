@@ -15,41 +15,46 @@ from transformers import pipeline
 summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
 
-# In[9]:
+# In[2]:
 
 
 # Set reordering function using Bart
 import nltk
 from nltk.tokenize import TreebankWordTokenizer
 
-# Hyperparamers: MIN_TOKEN_MULTIPLIER, MAX_TOKEN_MULTIPLIER,
-# Log base in nDCG (or discounting function as a whole)
+# Hyperparamers: MIN_TOKEN_LENGTH, MAX_TOKEN_LENGTH,
+# TO DO Log base in nDCG (or discounting function as a whole)
+MIN_TOKEN_LENGTH = 300
+MAX_TOKEN_LENGTH = 700
 
 # Trying shorter ordering
 #MIN_TOKEN_MULTIPLIER = 0.8
 #MAX_TOKEN_MULTIPLIER = 1
 
 # Gives better ordering? No, does not seem to give better ordering
-MIN_TOKEN_MULTIPLIER = 0.9
-MAX_TOKEN_MULTIPLIER = 1.0
+#MIN_TOKEN_MULTIPLIER = 0.9
+#MAX_TOKEN_MULTIPLIER = 1.0
 
 # Gets all sentences in output
 #MIN_TOKEN_MULTIPLIER = 1.1
 #MAX_TOKEN_MULTIPLIER = 1.3
 
 # Get number of tokens using nltk
-def getNumTokens(inputSentences):
+def getNumTokensList(inputSentences):
     tokenizer = TreebankWordTokenizer()
     count = 0
     for sentence in inputSentences:
         count += len(tokenizer.tokenize(sentence))
     return count
 
-# Takes in list of sentences and outputs reordered doc
-def reorderBart(inputSentences):
-    minLength = int(getNumTokens(inputSentences) * MIN_TOKEN_MULTIPLIER)
-    maxLength = int(getNumTokens(inputSentences) * MAX_TOKEN_MULTIPLIER)
-    return summarizer(" ".join(inputSentences), max_length=maxLength, min_length=minLength, do_sample=False)[0]["summary_text"]
+# Get number of tokens using nltk
+def getNumTokens(inputArticle):
+    tokenizer = TreebankWordTokenizer()
+    return len(tokenizer.tokenize(inputArticle))
+
+# Takes in batch of articles where they are in order of increasing article length and outputs reordered docs
+def reorderBart(batch):
+    return summarizer(batch, max_length=MAX_TOKEN_LENGTH, min_length=MIN_TOKEN_LENGTH, do_sample=False)
 
 
 # In[3]:
@@ -74,7 +79,7 @@ spacy_tokenizer = partial(spacy_sentence_tokenizer, nlp)
 #sentences = spacy_tokenizer(text) 
 
 
-# In[17]:
+# In[4]:
 
 
 # Sem_nDCG Metric
@@ -300,84 +305,77 @@ def nDCG(orderedPairs):
 # Test sentence pairing with combinations using Bart
 
 
-# In[22]:
-
-
-# Get cnn_dailymail dataset
-
-from datasets import load_dataset
-
-dataset = load_dataset("cnn_dailymail", '3.0.0')
-
-
-# In[23]:
+# In[7]:
 
 
 # Test non-sentence pairing metric on cnn_dailymail dataset
 
 import random
 import copy
+import pickle
 
 random.seed(0)
 
-numArticles = 1500
-numDone = 0
-numSeen = 0
-
-trainDataset = dataset["test"]["article"][0:numArticles]
-del dataset
+batchNum = 0
 
 file = open("bartResults.txt", "w")
 file.write("")
 file.close()
 
-for article in trainDataset:
+# Load batches from pickle file
+with open('dailymail.pkl', 'rb') as f:
+    batches = pickle.load(f)
+
+for batch in batches:
     
-    numSeen += 1
-    print(numSeen)
-
-    sentences = getSentences(article)
-
-    correctDoc = article
-
-    copyOfSentences = copy.copy(sentences)
-    random.shuffle(copyOfSentences)
-    shuffledSentences = copyOfSentences
+    batchNum += 1
+    print("Starting batch " + str(batchNum))
     
-    maxLength = int(getNumTokens(shuffledSentences) * MAX_TOKEN_MULTIPLIER)
-    if maxLength >= 800:
-        print("Doc too long")
-        continue
+    shuffledArticleBatch = []
+    
+    for article in batch:
+    
+        sentences = getSentences(article)
+
+        correctDoc = article
+
+        copyOfSentences = copy.copy(sentences)
+        random.shuffle(copyOfSentences)
+        shuffledSentences = copyOfSentences
+    
+        shuffledArticleBatch.append(" ".join(shuffledSentences))
+
 
     # Change reorder function to whatever method using
-    reorderedDoc = reorderBart(shuffledSentences)
+    reorderedDocs = reorderBart(shuffledArticleBatch)
     print("Done ordering")
         
     # Looking at reordered result
     #print(correctDoc + "\n")
     #print(" ".join(shuffledSentences) + "\n")
     #print(reorderedDoc + "\n")
-
-    correctSentences = getSentences(correctDoc)
-    reorderedSentences = getSentences(reorderedDoc)
-
-    correctEncodings = getEncodings(correctSentences)
-    reorderedEncodings = getEncodings(reorderedSentences)
-
-    simScores = getSimiliarities(correctEncodings, reorderedEncodings)
     
-    bestPairs = getBestPairings(simScores)
-    
-    orderedPairs = getOrderedPairs(bestPairs, len(correctSentences))
+    with open("bartResults.txt", "a") as f:
+        for i in range(len(reorderedDocs)):
+            
+            correctDoc = batch[i]
+            reorderedDoc = reorderedDocs[i]["summary_text"]
 
-    # Metric output
-    numDone += 1
-    print("Result for " + str(numDone))
-    result = nDCG(orderedPairs)
-    print(result)
-    file = open("bartResults.txt", "a")
-    file.write(str(result) + "\n")
-    file.close()
+            correctSentences = getSentences(correctDoc)
+            reorderedSentences = getSentences(reorderedDoc)
+
+            correctEncodings = getEncodings(correctSentences)
+            reorderedEncodings = getEncodings(reorderedSentences)
+
+            simScores = getSimiliarities(correctEncodings, reorderedEncodings)
+
+            bestPairs = getBestPairings(simScores)
+
+            orderedPairs = getOrderedPairs(bestPairs, len(correctSentences))
+
+            # Metric output
+            result = nDCG(orderedPairs)
+            f.write(str(result) + "\n")
 
 
 # In[ ]:

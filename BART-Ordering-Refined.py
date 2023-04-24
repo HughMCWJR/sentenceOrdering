@@ -54,7 +54,77 @@ def getNumTokens(inputArticle):
 
 # Takes in batch of articles where they are in order of increasing article length and outputs reordered docs
 def reorderBart(batch):
-    return summarizer(batch, max_length=MAX_TOKEN_LENGTH, min_length=MIN_TOKEN_LENGTH, do_sample=False)
+    responses = summarizer(batch, max_length=MAX_TOKEN_LENGTH, min_length=MIN_TOKEN_LENGTH, do_sample=False)
+    return responses["summary_text"]
+
+
+# In[14]:
+
+
+# Set up reordering function using GPT
+import openai
+import time
+import random
+
+file = open("gptKey.txt", "r")
+
+openai.api_key = file.read().strip()
+model_engine = "gpt-3.5-turbo"
+
+
+def run_openai(in_text):
+    ran = False
+    while not ran:
+        try:
+            response = openai.ChatCompletion.create(
+                model=model_engine,
+                temperature=0.8,
+                #max_tokens=max_length,
+                messages=[
+                    {"role": "system", "content": "The following paragraph has had its sentences shuffled, put them back in their original order."},
+                    {"role": "user", "content": in_text}
+                ],
+                stop=None,
+            )
+            ran = True
+        except:
+            print("Response Error")
+            time.sleep(10)
+
+    message0 = response['choices'][0]['message']['content']
+    #message1 = response['choices'][1]['message']['content']
+    #print("{}: {}".format(message['role'], message['content']))
+    return message0.strip()#,  message1.strip()#("{}".format(message['content']))
+
+def reorderGpt(batch):
+    returns = []
+    
+    for article in batch:
+        returns.append(run_openai(article))
+        
+    return returns
+
+
+# In[35]:
+
+
+# Set up reordering function using Flan-T5
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-xxl")
+tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-xxl")
+
+task_prefix = "The following paragraph has had its sentences shuffled, rewrite the entire paragraph in the correct order: "
+
+def reorderFlan(batch):
+    print([task_prefix + article for article in batch])
+    inputs = tokenizer([task_prefix + "\n" + article for article in batch], return_tensors="pt", padding=True)
+    output_sequences = model.generate(
+        input_ids=inputs["input_ids"],
+        attention_mask=inputs["attention_mask"],
+        do_sample=False,  # disable sampling to test if batching affects output
+    )
+    return(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
 
 
 # In[3]:
@@ -79,7 +149,7 @@ spacy_tokenizer = partial(spacy_sentence_tokenizer, nlp)
 #sentences = spacy_tokenizer(text) 
 
 
-# In[4]:
+# In[1]:
 
 
 # Sem_nDCG Metric
@@ -305,7 +375,7 @@ def nDCG(orderedPairs):
 # Test sentence pairing with combinations using Bart
 
 
-# In[7]:
+# In[15]:
 
 
 # Test non-sentence pairing metric on cnn_dailymail dataset
@@ -316,20 +386,25 @@ import pickle
 
 random.seed(0)
 
-batchNum = 0
+batchNum = 1
 
-file = open("bartResults.txt", "w")
-file.write("")
-file.close()
+#resultsFileName = "bartResults.txt"
+resultsFileName = "gptResults.txt"
+
+if batchNum == 0:
+    file = open(resultsFileName, "w")
+    file.write("")
+    file.close()
 
 # Load batches from pickle file
 with open('dailymail.pkl', 'rb') as f:
     batches = pickle.load(f)
 
-for batch in batches:
+for i in range(batchNum, len(batches)):
+
+    batch = batches[i]
     
-    batchNum += 1
-    print("Starting batch " + str(batchNum))
+    print("Starting batch " + str(i + 1))
     
     shuffledArticleBatch = []
     
@@ -347,7 +422,9 @@ for batch in batches:
 
 
     # Change reorder function to whatever method using
-    reorderedDocs = reorderBart(shuffledArticleBatch)
+    #reorderedDocs = reorderBart(shuffledArticleBatch)
+    #reorderedDocs = reorderGpt(shuffledArticleBatch)
+    reorderedDocs = reorderFlan(shuffledArticleBatch)
     print("Done ordering")
         
     # Looking at reordered result
@@ -355,11 +432,11 @@ for batch in batches:
     #print(" ".join(shuffledSentences) + "\n")
     #print(reorderedDoc + "\n")
     
-    with open("bartResults.txt", "a") as f:
+    with open(resultsFileName, "a") as f:
         for i in range(len(reorderedDocs)):
             
             correctDoc = batch[i]
-            reorderedDoc = reorderedDocs[i]["summary_text"]
+            reorderedDoc = reorderedDocs[i]
 
             correctSentences = getSentences(correctDoc)
             reorderedSentences = getSentences(reorderedDoc)

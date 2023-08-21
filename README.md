@@ -8,7 +8,7 @@ To select a model, change the "modelName" hyperparameter in the second cell.
 
 ### OpenAI
 
-For this model to work, I simply added a text file containing my OpenAI key named gptKey.txt. If that is too insecure, I can go back and make this use environmental variables.
+For this model to work, one simply needs to aa a text file containing their OpenAI key named gptKey.txt.
 
 ### BART, LLama
 

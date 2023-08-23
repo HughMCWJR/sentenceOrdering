@@ -10,9 +10,10 @@ To select a model, change the "modelName" hyperparameter in the second cell.
 
 For this model to work, one simply needs to aa a text file containing their OpenAI key named gptKey.txt.
 
-### BART, LLama
+### BART, Llama
 
 This should work out of the box after making the requisite installs.
+(NOTE: when using Llama, must run python executable with torchrun)
 
 ### Flan
 
